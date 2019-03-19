@@ -5,10 +5,17 @@ int distance = 0;
 int state[2] = {STOPPED, STOPPED};
 bool opening[2] = {true, true};
 bool homing[2] = {false, false};
+bool backingOff[2] = {false, false};
 int pulsePin[2] = {9, 10};
-int dirPin[2] = {32, 33};
-int limitOpenPin[2] = {30, 31};
+int dirPin[2] = {2, 3};
+int limitOpenPin[2] = {4, 5};
 int limitDist[2] = {1000, 1000};
+String doorName[2] = {"right", "left"};
+int doorOpening[2] = {HIGH, LOW};
+int doorClosing[2] = {LOW, HIGH};
+int doorTravelled[2] = {18977, 19327};
+bool dualMode = false;
+int speed = 200;
 
 int selectedDoor = 0;
 
@@ -36,21 +43,33 @@ void moveDoor(int door) {
   if (state[door] == MOVING) {
 
     digitalWrite(pulsePin[door], HIGH);
-    delayMicroseconds(500);
+    delayMicroseconds(speed);
     digitalWrite(pulsePin[door], LOW);
-    delayMicroseconds(500);
+    delayMicroseconds(speed);
   
     distance += 1;
-    if (limitSwitchOpen(door) && opening[door]) {
-      stopDoor(door);
-    }
-    if (!homing && (distance >= limitDist[door])) {
-      stopDoor(door);
+    if (backingOff[door]) {
+      backingOff[door] = limitSwitchOpen(door);
+      if (!backingOff[door]) {
+        Serial.println("Backing off complete");
+        stopDoor(door);
+      }
+    } else {
+      if (limitSwitchOpen(door) && opening[door]) {
+        opening[door] = false;
+        setDirection(door);
+        Serial.println("Backing off");
+        backingOff[door] = true;
+      }
+      if (!homing && (distance >= limitDist[door])) {
+        stopDoor(door);
+      }
     }
   }
 }
 
 void stopDoor(int door) {
+  Serial.println(doorName[door] + String("Travelled ") + String(distance));
   state[door] = STOPPED;
   homing[door] = false;
   distance = 0;
@@ -66,7 +85,12 @@ void doJobs(){
   bool done = false;
   while (!done) {
     while (!Serial.available()){
-      moveDoor(selectedDoor);
+      if (dualMode) {
+        moveDoor(0);
+        moveDoor(1);
+      } else {
+        moveDoor(selectedDoor);
+      }
     }
     delay(10);
     while(Serial.available())
@@ -83,17 +107,38 @@ void doJobs(){
         displayStatus();
         break;
       case 2:
-        if (state[selectedDoor] != MOVING) state[selectedDoor] = MOVING;
+        if (dualMode) {
+          Serial.println(String("Moving both doors"));
+          state[0] = MOVING;
+          state[1] = MOVING;
+        } else {
+          Serial.println(String("Moving door: ") + String(selectedDoor));
+          state[selectedDoor] = MOVING;
+        }
         break;
       case 3: 
-        state[selectedDoor] = STOPPED;
+        if (dualMode) {
+          stopDoor(0);
+          stopDoor(1);
+        } else {
+          stopDoor(selectedDoor);
+        }
         break;
       case 4: 
-        opening[selectedDoor] = !opening[selectedDoor];
-        setDirection(selectedDoor);
+        if (dualMode) {
+          opening[0] = !opening[0];
+          setDirection(0);
+          opening[1] = !opening[1];
+          setDirection(1);
+        } else {
+          opening[selectedDoor] = !opening[selectedDoor];
+          setDirection(selectedDoor);
+          Serial.print(String("Door ") + doorName[selectedDoor] + String(" is "));
+          Serial.println(opening[selectedDoor] ? "opening" : "closing");
+        }
         break;
       case 5:
-        Serial.print(String("Limit switch is "));
+        Serial.print(String("Door ") + doorName[selectedDoor] + String(" limit switch is "));
         Serial.println(limitSwitchOpen(selectedDoor) ? "on" : "off");
         break;
       case 6:
@@ -107,6 +152,10 @@ void doJobs(){
         opening[selectedDoor] = true;
         state[selectedDoor] = MOVING;
         break;
+      case 8:
+        dualMode = !dualMode;
+        Serial.println(dualMode ? "Dual Mode" : "Single Mode");
+        break;
     } // end of switch
   }
   Serial.println("DONE in getJob().");
@@ -114,17 +163,19 @@ void doJobs(){
 
 void setDirection(int door) {
   if (opening[door]) {
-    digitalWrite(dirPin[door], HIGH);
+    Serial.println(doorName[door] + " setDirection, opening");
+    digitalWrite(dirPin[door], doorOpening[door]);
   }
   else {
-    digitalWrite(dirPin[door], LOW);
+    Serial.println(doorName[door] + "setDirection, closing");
+    digitalWrite(dirPin[door], doorClosing[door]);
   }
 }
 
 void displayStatus() {
-  Serial.println(String("Selected door is: ") + String(selectedDoor));
+  Serial.println(String("Selected door is: ") + doorName[selectedDoor]);
   for (int i = 0; i < 2; i++) {
-    Serial.print(String("Door ") + String(i) + String(" is "));
+    Serial.print(doorName[i] + String(" is "));
     Serial.print(String(state[i] == MOVING ? "MOVING" : "STOPPED"));
     Serial.println(String(", ") + String(opening[i] ? "OPENING" : "CLOSING"));
   }
@@ -142,4 +193,5 @@ void getJobMenu() {
  Serial.println("5. read limit switch");
  Serial.println("6. select door");
  Serial.println("7. home");
+ Serial.println("8. mode switch");
 }
