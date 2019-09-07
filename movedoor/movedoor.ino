@@ -1,67 +1,108 @@
+// Door names
+String doorName[2] = {"right", "left"};
+
+// Door state, stopped, opening, backing off
 const int STOPPED = 0;
 const int MOVING = 1;
-int distance = 0;
-
 int state[2] = {STOPPED, STOPPED};
 bool opening[2] = {true, true};
-bool homing[2] = {false, false};
 bool backingOff[2] = {false, false};
+
+// PWM pins and values for opening / closing
 int pulsePin[2] = {9, 10};
-int dirPin[2] = {2, 3};
-int limitOpenPin[2] = {4, 5};
-int limitDist[2] = {1000, 1000};
-String doorName[2] = {"right", "left"};
 int doorOpening[2] = {HIGH, LOW};
 int doorClosing[2] = {LOW, HIGH};
-int doorTravelled[2] = {18977, 19327};
-bool dualMode = false;
+// Motor direction pins
+int dirPin[2] = {2, 3};
+// Limit switch read pins
+int limitOpenPin[2] = {4, 5};
+
+// Steps from opened to closed
+int stepLimit[2] = {18977, 19327};
+int position[2] = {0,0};
+
+// rate of travel (inverse)
 int speed = 200;
 
+// Testing values
 int selectedDoor = 0;
+bool testMode = false;
+bool dualMode = false;
 
 void setup() {
   Serial.begin(115200);
   delay(10);
 
+  pinMode(limitOpenPin[0], INPUT);
+  pinMode(limitOpenPin[1], INPUT);
   pinMode(dirPin[0], OUTPUT);
   pinMode(dirPin[1], OUTPUT);
   pinMode(pulsePin[0], OUTPUT);  
   pinMode(pulsePin[1], OUTPUT);  
-  pinMode(limitOpenPin[0], INPUT);
-  pinMode(limitOpenPin[1], INPUT);
   digitalWrite(pulsePin[0], LOW);
-  digitalWrite(pulsePin[1], LOW);
+  digitalWrite(pulsePin[1], HIGH);
+
   setDirection(0);
   setDirection(1);
+
+  // Wait about 3 seconds for input to go into test mode
+  int count = 6;
+  while (!Serial.available() && (count-- > 0)) {
+    delay(500);
+  }
+
+  if (Serial.available()) {
+    testMode = true;
+  }
+  else {
+    // Live mode start by opening the doors
+    state[0] = MOVING;
+    state[1] = MOVING;
+  }
 }
 
 void loop() {
-  doJobs();
+  if (testMode) {
+    doJobs();
+  }
+  else {
+    doLive();
+  }
+}
+
+void doLive() {
+  // read sensor
+  // transition between moving and stopped
+  moveDoor(0);
+  moveDoor(1);
 }
 
 void moveDoor(int door) {
   if (state[door] == MOVING) {
-
     digitalWrite(pulsePin[door], HIGH);
     delayMicroseconds(speed);
     digitalWrite(pulsePin[door], LOW);
     delayMicroseconds(speed);
   
-    distance += 1;
+    position[door] += opening[door] ? -1 : 1;
     if (backingOff[door]) {
-      backingOff[door] = limitSwitchOpen(door);
+      backingOff[door] = isLimitSwitchOpen(door);
       if (!backingOff[door]) {
         Serial.println("Backing off complete");
         stopDoor(door);
+        // reset position after backing off
+        position[door] = 0;
       }
-    } else {
-      if (limitSwitchOpen(door) && opening[door]) {
+    } else if (opening[door]) {
+      if (isLimitSwitchOpen(door)) {
         opening[door] = false;
         setDirection(door);
         Serial.println("Backing off");
         backingOff[door] = true;
       }
-      if (!homing && (distance >= limitDist[door])) {
+    } else {
+      if (position[door] > stepLimit[door]) {
+        opening[door] = true;
         stopDoor(door);
       }
     }
@@ -69,13 +110,11 @@ void moveDoor(int door) {
 }
 
 void stopDoor(int door) {
-  Serial.println(doorName[door] + String("Travelled ") + String(distance));
+  Serial.println(doorName[door] + String("Position: ") + String(position[door]));
   state[door] = STOPPED;
-  homing[door] = false;
-  distance = 0;
 }
 
-bool limitSwitchOpen(int door) {
+bool isLimitSwitchOpen(int door) {
   return digitalRead(limitOpenPin[door]) == LOW;
 }
 
@@ -139,7 +178,7 @@ void doJobs(){
         break;
       case 5:
         Serial.print(String("Door ") + doorName[selectedDoor] + String(" limit switch is "));
-        Serial.println(limitSwitchOpen(selectedDoor) ? "on" : "off");
+        Serial.println(isLimitSwitchOpen(selectedDoor) ? "on" : "off");
         break;
       case 6:
         selectedDoor = (selectedDoor + 1) % 2;
@@ -148,9 +187,9 @@ void doJobs(){
         break;
       case 7:
         Serial.println("Homing - opening to limit switch");
-        homing[selectedDoor] = true;
         opening[selectedDoor] = true;
         state[selectedDoor] = MOVING;
+        setDirection(selectedDoor);
         break;
       case 8:
         dualMode = !dualMode;
